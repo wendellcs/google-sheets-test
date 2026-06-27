@@ -119,16 +119,11 @@ def parse_sheet(sheet):
 
     return result
 
-data = {
-    normalize_key(sheet.title): parse_sheet(sheet)
-    for sheet in sheets
-}
 
 @app.get('/sheets')
 def get_sheets():
+    data = {
+        normalize_key(sheet.title): parse_sheet(sheet)
+        for sheet in sheets
+    }
     return data
-
-
-# Criar rota de busca de dados com FastAPI para enviar dados ao front end
-# Não há necessidade de um banco de dados
-# Hostear no render pode ser o bastante
