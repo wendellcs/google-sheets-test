@@ -5,7 +5,6 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import re
 
 app = FastAPI()
 load_dotenv()
@@ -27,7 +26,6 @@ app.add_middleware(
     allow_headers = ['*']
 )
 
-
 creds = Credentials.from_service_account_file(
     cred_path,
     scopes = ["https://www.googleapis.com/auth/spreadsheets",
@@ -35,95 +33,63 @@ creds = Credentials.from_service_account_file(
 )
 
 client = gspread.authorize(creds)
-spreadsheet = client.open_by_key(DATA_ID)
-sheets = spreadsheet.worksheets()
+sh = client.open_by_key(DATA_ID)
 
-def normalize_key(text):
-    text = text.strip()
-    text = re.sub(r"[^\w\s]", "", text)
-    text = re.sub(r"\s+", "_", text)
+def load_sheet(name):
+    ws = sh.worksheet(name)
+    return ws.get_all_records()
 
-    return text.lower()
+sheets = {
+    'products': load_sheet('products'),
+    'numbers': load_sheet('numbers'),
+    'bonuses': load_sheet('bonuses'),
+    'comercial': load_sheet('comercial'),
+    'delivery': load_sheet('delivery')
+}
 
-
-def clean_sheet_data(rows):
-    cleaned = []
+def index_by_product_id(rows):
+    result = {}
 
     for row in rows:
-        clean_row = []
+        pid = row["product_id"]
 
-        for cell in row:
-            cell = cell.replace("|", "").strip()
+        if pid not in result:
+            result[pid] = []
 
-            if cell:
-                clean_row.append(cell)
-
-        if clean_row:
-            cleaned.append(clean_row)
-
-    return cleaned
-
-
-def parse_sheet(sheet):
-    rows = clean_sheet_data(sheet.get_all_values())
-
-    result = {
-        "title": sheet.title.strip(),
-        "slug": normalize_key(sheet.title),
-        "description": "",
-        "type": None,
-        "content": None
-    }
-
-    if not rows:
-        return result
-
-    result["description"] = rows[0][0]
-
-    # Detecta tabela
-    if len(rows) > 2 and len(rows[1]) >= 3:
-        result["type"] = "table"
-
-        headers = [
-            normalize_key(header)
-            for header in rows[1]
-        ]
-
-        table_rows = []
-
-        for row in rows[2:]:
-            item = {}
-
-            for i, value in enumerate(row):
-                if i < len(headers):
-                    item[headers[i]] = value
-
-            if item:
-                table_rows.append(item)
-
-        result["content"] = table_rows
-
-    else:
-        result["type"] = "key_value"
-
-        content = {}
-
-        for row in rows[1:]:
-            if len(row) >= 2:
-                key = normalize_key(row[0])
-                value = row[1]
-
-                content[key] = value
-
-        result["content"] = content
+        result[pid].append(row)
 
     return result
 
+numbers_idx = index_by_product_id(sheets["numbers"])
+bonuses_idx = index_by_product_id(sheets["bonuses"])
+comercial_idx = index_by_product_id(sheets["comercial"])
+delivery_idx = index_by_product_id(sheets["delivery"])
+
+def build_product(product_row):
+    pid = product_row["product_id"]
+
+    return {
+        **product_row,
+        "numbers": sorted(numbers_idx.get(pid, []),
+            key=lambda x: x.get('order', 0)
+        ),
+
+        "bonuses": bonuses_idx.get(pid, []),
+        "comercial": sorted(
+            comercial_idx.get(pid, []),
+            key=lambda x: x.get('order', 0)
+        ),
+
+        "delivery": sorted(
+            delivery_idx.get(pid, []),
+            key=lambda x: x.get("order", 0)
+        )
+    }
+
+products = sheets["products"]
+
+all_products = [build_product(p) for p in products]
 
 @app.get('/sheets')
 def get_sheets():
-    data = {
-        normalize_key(sheet.title): parse_sheet(sheet)
-        for sheet in sheets
-    }
-    return data
+    return all_products
